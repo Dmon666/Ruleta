@@ -138,7 +138,6 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // === CONFIGURACIÓN DE FIREBASE (¡REEMPLAZA ESTO!) ===
         const firebaseConfig = {
             apiKey: "AIzaSyDknd0CfKUmBj-E8sdH33YfT1qRk6KEz3o",
             authDomain: "ruleta-31446.firebaseapp.com",
@@ -190,7 +189,7 @@
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
-                checkUrlRoute(); // Checar url una vez que tenemos usuario
+                checkUrlRoute(); 
             } else {
                 currentUser = null;
             }
@@ -309,6 +308,11 @@
                 window.location.hash = newId; // Esto disparará checkUrlRoute()
                 showToast("¡Ruleta creada exitosamente!", "success");
 
+                // Asegurar que se dibuje inmediatamente al entrar
+                setTimeout(() => {
+                    drawRoulette();
+                }, 100);
+
             } catch (error) {
                 console.error("Error guardando:", error);
                 showToast("Hubo un error al crear la ruleta.", "error");
@@ -334,16 +338,18 @@
                     // Sincronizar items
                     if (JSON.stringify(items) !== JSON.stringify(currentRouletteData.items)) {
                         items = currentRouletteData.items || [];
-                        if (!isSpinning) drawRoulette();
                     }
+                    // Forzar dibujado siempre que lleguen datos nuevos para que no aparezca en blanco
+                    drawRoulette();
                     
                     // Verificar permisos
                     isInitiator = (currentUser && currentRouletteData.creatorId === currentUser.uid);
                     
-                    // Escuchar nuevos giros remotos
+                    // Escuchar nuevos giros remotos (Evitar doble ejecución comprobando si el timestamp cambió respecto al último procesado)
                     if (currentRouletteData.spinTimestamp && currentRouletteData.spinTarget !== null && !isSpinning) {
                         const isRecent = (Date.now() - currentRouletteData.spinTimestamp) < 5000;
-                        if (isRecent) {
+                        if (isRecent && currentRouletteData.spinTimestamp !== window.lastProcessedSpinTimestamp) {
+                            window.lastProcessedSpinTimestamp = currentRouletteData.spinTimestamp;
                             startSpinAnimation(currentRouletteData.spinTarget);
                         }
                     }
@@ -429,11 +435,14 @@
             
             if (currentRouletteId) {
                 if (isInitiator) {
+                    const now = Date.now();
+                    window.lastProcessedSpinTimestamp = now; // Marcar timestamp local para evitar doble trigger de onSnapshot
+
                     // Si es creador, manda la orden a la nube
                     const docRef = doc(db, 'roulettes', currentRouletteId);
                     updateDoc(docRef, {
                         spinTarget: targetIndex,
-                        spinTimestamp: Date.now()
+                        spinTimestamp: now
                     }).catch(err => console.error("Error de sincronización:", err));
                     
                     startSpinAnimation(targetIndex);
