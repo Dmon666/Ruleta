@@ -134,13 +134,19 @@
 
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+    
+      const firebaseConfig = {
+        apiKey: "AIzaSyDknd0CfKUmBj-E8sdH33YfT1qRk6KEz3o",
+        authDomain: "ruleta-31446.firebaseapp.com",
+        projectId: "ruleta-31446",
+        storageBucket: "ruleta-31446.firebasestorage.app",
+        messagingSenderId: "611436954573",
+        appId: "1:611436954573:web:e3cdcd1e6f2943fa50fa84"
+      };
 
 
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+      const app = initializeApp(firebaseConfig);
         
         let app, auth, db, currentUser;
         
