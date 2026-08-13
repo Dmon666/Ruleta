@@ -131,14 +131,11 @@
         </button>
 
     </div>
-
-
-    <script type="module">
+        <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
         const firebaseConfig = {
             apiKey: "AIzaSyDknd0CfKUmBj-E8sdH33YfT1qRk6KEz3o",
             authDomain: "ruleta-31446.firebaseapp.com",
@@ -148,472 +145,402 @@
             appId: "1:611436954573:web:e3cdcd1e6f2943fa50fa84"
         };
 
-        
-        let app, auth, db, currentUser;
-        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-        let currentRouletteData = null;
+        let items = ["🍕 Pizza", "🍔 Hamburguesa", "🍣 Sushi", "🌮 Tacos", "🥗 Ensalada"];
+        let colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FDCB6E', '#6C5CE7', '#FFA62B', '#2ECC71'];
+        
         let currentRouletteId = null;
         let unsubscribeSnapshot = null;
+        let isInitiator = false;
+        let currentUser = null;
+        let currentRouletteData = {};
         
-
-        let currentRotation = 0;
+        let currentAngle = 0;
         let isSpinning = false;
-        let animationFrameId = null;
-        let localLastSpinTime = 0; 
+        let spinTimeout = null;
+        let spinAngleStart = 0;
+        let spinTime = 0;
+        let spinTimeTotal = 0;
+        
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas ? canvas.getContext('2d') : null;
+        const spinBtn = document.getElementById('spin-btn');
+        const itemInput = document.getElementById('item-input');
+        const addBtn = document.getElementById('add-btn');
+        const itemsList = document.getElementById('items-list');
+        const saveShareBtn = document.getElementById('save-share-btn');
+        const shareUrlInput = document.getElementById('share-url');
+        const copyBtn = document.getElementById('copy-btn');
+        const historyList = document.getElementById('history-list');
 
+        signInAnonymously(auth).catch((error) => {
+            console.error("Error en auth anónima:", error);
+            showToast("Error de autenticación con Firebase", "error");
+        });
 
-        const PALETTE = ['#FF595E', '#FFCA3A', '#8AC926', '#1982C4', '#6A4C93', '#F56476', '#E0FF4F', '#084C61', '#F8961E', '#43AA8B'];
-
-  
-        const views = {
-            home: document.getElementById('view-home'),
-            create: document.getElementById('view-create'),
-            roulette: document.getElementById('view-roulette')
-        };
-        const canvas = document.getElementById('roulette-canvas');
-        const ctx = canvas.getContext('2d');
-        const itemsListDiv = document.getElementById('items-list');
-        const historyListDiv = document.getElementById('history-list');
-
-        async function init() {
-            try {
-                app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-
-
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        currentUser = user;
-                        handleRouting(); 
-                    }
-                });
-            } catch (error) {
-                console.error("Error al inicializar Firebase:", error);
-                showToast("Hubo un error de conexión.", "error");
-            }
-            
-            setupEventListeners();
-        }
-
-
-        function handleRouting() {
-            const hash = window.location.hash.substring(1);
-            if (hash && hash !== 'crear') {
-                loadRoulette(hash);
-            } else if (hash === 'crear') {
-                showView('create');
-                setupCreateForm();
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                checkUrlForId();
             } else {
-                showView('home');
+                currentUser = null;
             }
-        }
+        });
 
-        window.addEventListener('hashchange', handleRouting);
+        function drawRoulette() {
+            if (!ctx || !canvas) return;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) - 10;
 
-        function showView(viewName) {
-            Object.values(views).forEach(v => v.classList.add('hidden'));
-            views[viewName].classList.remove('hidden');
-            views[viewName].classList.add('flex');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            if (viewName === 'roulette') {
-                resizeCanvas();
+            if (items.length === 0) {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                ctx.fillStyle = '#f3f4f6'; // Gris claro
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = '#374151';
+                ctx.font = '20px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Agrega opciones', centerX, centerY);
+                return;
+            }
+
+            const arc = Math.PI * 2 / items.length;
+
+            for (let i = 0; i < items.length; i++) {
+                const angle = currentAngle + i * arc;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, angle, angle + arc, false);
+                ctx.lineTo(centerX, centerY);
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.fill();
+                ctx.save();
+                ctx.strokeStyle = "rgba(255,255,255,0.5)";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+
+                ctx.save();
+
+                ctx.translate(centerX + Math.cos(angle + arc / 2) * radius * 0.7, 
+                              centerY + Math.sin(angle + arc / 2) * radius * 0.7);
+                ctx.rotate(angle + arc / 2 + Math.PI / 2);
+                ctx.fillStyle = "#fff";
+                ctx.font = 'bold 16px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                
+                let text = items[i];
+                if(text.length > 18) text = text.substring(0, 15) + '...';
+                ctx.fillText(text, 0, 0);
+                ctx.restore();
+            }
+
+            ctx.fillStyle = "#1F2937";
+            ctx.beginPath();
+            ctx.moveTo(centerX - 15, centerY - radius - 15);
+            ctx.lineTo(centerX + 15, centerY - radius - 15);
+            ctx.lineTo(centerX, centerY - radius + 15);
+            ctx.fill();
+        }
+
+        function spin() {
+            if (isSpinning || items.length === 0) return;
+            
+            const N = items.length;
+            const targetIndex = Math.floor(Math.random() * N);
+            
+            if (currentRouletteId && isInitiator) {
+                // Compartida y creador: Sincronizar con Firestore
+                const docRef = doc(db, 'roulettes', currentRouletteId);
+                updateDoc(docRef, {
+                    spinTarget: targetIndex,
+                    spinTimestamp: Date.now()
+                }).catch(err => console.error("Error al sincronizar giro:", err));
+            } else if (!currentRouletteId) {
+                // Local: Girar inmediatamente
+                startSpinAnimation(targetIndex);
+            } else {
+                showToast("Solo el creador puede girar esta ruleta compartida", "warning");
             }
         }
 
+        function startSpinAnimation(targetIndex) {
+            isSpinning = true;
+            spinTime = 0;
+            spinTimeTotal = 4000 + Math.random() * 1000;
+            
+            const arc = Math.PI * 2 / items.length;
+            const targetAngle = (3 * Math.PI / 2) - (targetIndex * arc) - (arc / 2);
+            const spins = 6 + Math.floor(Math.random() * 4); // Entre 6 y 9 vueltas extras
+            
+            const currentAngleMod = currentAngle % (Math.PI * 2);
+            let angleDiff = targetAngle - currentAngleMod;
+            if (angleDiff < 0) angleDiff += Math.PI * 2;
+            
+            spinAngleStart = (spins * Math.PI * 2) + angleDiff;
+            
+            rotateWheel();
+        }
+
+        function rotateWheel() {
+            spinTime += 30;
+            if (spinTime >= spinTimeTotal) {
+                stopRotateWheel();
+                return;
+            }
+            // Curva Ease-out (Desaceleración)
+            const progress = spinTime / spinTimeTotal;
+            const easeOut = 1 - Math.pow(1 - progress, 3.5);
+            
+            const angleStep = spinAngleStart * (1 - easeOut);
+            currentAngle += (angleStep * 0.05);
+            
+            drawRoulette();
+            spinTimeout = requestAnimationFrame(rotateWheel);
+        }
+
+        function stopRotateWheel() {
+            cancelAnimationFrame(spinTimeout);
+            isSpinning = false;
+            
+            // Determinar ganador según la posición final
+            const arc = Math.PI * 2 / items.length;
+            const degrees = currentAngle % (Math.PI * 2);
+            let normalized = (3 * Math.PI / 2) - degrees;
+            if (normalized < 0) normalized += Math.PI * 2;
+            
+            const index = Math.floor(normalized / arc);
+            const winnerValue = items[index];
+            
+            showToast(`¡Salió: ${winnerValue}!`, 'success');
+            
+            // Guardar en el historial si somos creadores
+            if (isInitiator && currentUser && currentRouletteId) {
+                const docRef = doc(db, 'roulettes', currentRouletteId);
+                const newHistory = [...(currentRouletteData.history || []), {
+                    value: winnerValue,
+                    timestamp: Date.now()
+                }];
+                updateDoc(docRef, { history: newHistory })
+                    .catch(err => console.error("Error guardando historial:", err));
+            }
+        }
+
+        async function saveAndShareRoulette() {
+            if (items.length === 0) {
+                showToast('Agrega opciones antes de compartir', 'warning');
+                return;
+            }
+            if (!currentUser) {
+                showToast('Aún conectando a la base de datos, intenta de nuevo...', 'warning');
+                return;
+            }
+            
+            try {
+                const newId = Math.random().toString(36).substring(2, 9);
+                const docRef = doc(db, 'roulettes', newId);
+                
+                const initialData = {
+                    creatorId: currentUser.uid,
+                    items: items,
+                    history: [],
+                    spinTarget: null,
+                    spinTimestamp: null,
+                    createdAt: Date.now()
+                };
+                
+                await setDoc(docRef, initialData);
+                
+                isInitiator = true;
+                currentRouletteId = newId;
+                
+                if (shareUrlInput) {
+                    shareUrlInput.value = window.location.origin + window.location.pathname + '#' + newId;
+                }
+                
+                showToast('¡Ruleta guardada! Comparte el enlace.', 'success');
+                loadRoulette(newId);
+                
+            } catch (error) {
+                console.error("Error al crear sesión compartida:", error);
+                showToast('Hubo un error al generar el enlace', 'error');
+            }
+        }
+
+        function loadRoulette(id) {
+            if (unsubscribeSnapshot) unsubscribeSnapshot();
+            
+            const docRef = doc(db, 'roulettes', id);
+            unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    currentRouletteData = docSnap.data();
+                    currentRouletteId = id;
+                    
+                    // Sincronizar opciones
+                    if (currentRouletteData.items) {
+                        items = currentRouletteData.items;
+                        updateListUI();
+                        if (!isSpinning) drawRoulette();
+                    }
+                    
+                    isInitiator = (currentUser && currentRouletteData.creatorId === currentUser.uid);
+                    
+                    // Escuchar nuevo giro
+                    if (currentRouletteData.spinTimestamp && currentRouletteData.spinTarget !== null && !isSpinning) {
+                        const isRecent = (Date.now() - currentRouletteData.spinTimestamp) < 5000;
+                        if (isRecent) {
+                            startSpinAnimation(currentRouletteData.spinTarget);
+                        }
+                    }
+
+                    // Sincronizar historial
+                    updateHistoryUI(currentRouletteData.history || []);
+                    
+                } else {
+                    showToast("Esa ruleta no existe o expiró.", "error");
+                }
+            });
+        }
+
+        function checkUrlForId() {
+            const hash = window.location.hash;
+            if (hash && hash.length > 1) {
+                const id = hash.substring(1);
+                loadRoulette(id);
+                if (shareUrlInput) shareUrlInput.value = window.location.href;
+            } else {
+                updateListUI();
+                drawRoulette();
+            }
+        }
+
+        function updateListUI() {
+            if (!itemsList) return;
+            itemsList.innerHTML = '';
+            items.forEach((item, index) => {
+                const li = document.createElement('li');
+                li.className = 'flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-100 mb-2 shadow-sm';
+                
+                const textSpan = document.createElement('span');
+                textSpan.textContent = item;
+                textSpan.className = 'font-medium text-gray-700 truncate';
+                
+                const deleteBtn = document.createElement('button');
+                deleteBtn.innerHTML = '✕';
+                deleteBtn.className = 'text-red-400 hover:text-red-600 transition-colors w-8 h-8 rounded-full hover:bg-red-50 flex items-center justify-center';
+                
+                deleteBtn.onclick = () => {
+                    items.splice(index, 1);
+                    updateListUI();
+                    drawRoulette();
+                    if (currentRouletteId && isInitiator) {
+                        updateDoc(doc(db, 'roulettes', currentRouletteId), { items: items });
+                    }
+                };
+                
+                li.appendChild(textSpan);
+                li.appendChild(deleteBtn);
+                itemsList.appendChild(li);
+            });
+        }
+
+        function updateHistoryUI(historyData) {
+            if (!historyList) return;
+            historyList.innerHTML = '';
+            
+            if (historyData.length === 0) {
+                historyList.innerHTML = '<li class="text-gray-400 text-sm text-center py-4 italic">El historial está vacío</li>';
+                return;
+            }
+
+            const reversed = [...historyData].reverse().slice(0, 10);
+            reversed.forEach((record) => {
+                const li = document.createElement('li');
+                li.className = 'bg-white p-3 rounded-lg shadow-sm border-l-4 border-blue-500 mb-2 flex justify-between items-center';
+                
+                const valSpan = document.createElement('span');
+                valSpan.className = 'font-bold text-gray-800';
+                valSpan.textContent = record.value;
+                
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'text-xs text-gray-400 font-medium';
+                const date = new Date(record.timestamp);
+                timeSpan.textContent = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+                
+                li.appendChild(valSpan);
+                li.appendChild(timeSpan);
+                historyList.appendChild(li);
+            });
+        }
 
         function showToast(message, type = 'info') {
-            const toastContainer = document.getElementById('toast-container');
             const toast = document.createElement('div');
-            const colors = type === 'error' ? 'bg-red-500' : (type === 'success' ? 'bg-green-500' : 'bg-gray-800');
-            toast.className = `${colors} text-white px-6 py-3 rounded-xl shadow-lg font-medium text-sm toast-enter toast-enter-active`;
+            toast.className = `fixed bottom-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-lg text-white font-bold transition-all duration-300 z-50 text-sm`;
+            
+            if (type === 'success') toast.classList.add('bg-green-500');
+            else if (type === 'error') toast.classList.add('bg-red-500');
+            else if (type === 'warning') toast.classList.add('bg-yellow-500', 'text-yellow-900');
+            else toast.classList.add('bg-blue-500');
+            
             toast.textContent = message;
-            toastContainer.appendChild(toast);
-
+            document.body.appendChild(toast);
+            
             setTimeout(() => {
-                toast.classList.replace('toast-enter-active', 'toast-exit-active');
+                toast.style.opacity = '0';
+                toast.style.transform = 'translate(-50%, 100%)';
                 setTimeout(() => toast.remove(), 300);
             }, 3000);
         }
 
-
-        function setupCreateForm() {
-            itemsListDiv.innerHTML = '';
-            addInputItem('Opción 1');
-            addInputItem('Opción 2');
-            addInputItem('Opción 3');
-        }
-
-        function addInputItem(value = '') {
-            const div = document.createElement('div');
-            div.className = 'flex gap-2 w-full';
-            div.innerHTML = `
-                <input type="text" value="${value}" placeholder="Ej. Tacos" class="flex-1 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none item-input">
-                <button type="button" class="btn-remove-item text-red-500 hover:bg-red-50 p-2.5 rounded-lg transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
-                    </svg>
-                </button>
-            `;
-            
-            div.querySelector('.btn-remove-item').addEventListener('click', () => {
-                if (document.querySelectorAll('.item-input').length > 2) {
-                    div.remove();
-                } else {
-                    showToast('La ruleta debe tener al menos 2 opciones.', 'error');
-                }
-            });
-            
-            itemsListDiv.appendChild(div);
-            div.querySelector('input').focus();
-        }
-
-        async function saveAndShareRoulette() {
-            if (!currentUser) return;
-
-            const inputs = document.querySelectorAll('.item-input');
-            const items = Array.from(inputs).map(inp => inp.value.trim()).filter(val => val !== '');
-            
-            if (items.length < 2) {
-                showToast('Ingresa al menos 2 opciones válidas.', 'error');
-                return;
-            }
-
-
-            const colors = items.map((_, i) => PALETTE[i % PALETTE.length]);
-            
-  
-            const newId = Math.random().toString(36).substring(2, 9);
-            
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'roulettes', newId);
-            
-            const initialData = {
-                items: items,
-                colors: colors,
-                history: [],
-                lastSpin: null
-            };
-
-            try {
-                const btn = document.getElementById('btn-save-roulette');
-                btn.disabled = true;
-                btn.textContent = "Guardando...";
-                
-                await setDoc(docRef, initialData);
-                
-
-                window.location.hash = newId;
-                showToast('¡Ruleta creada exitosamente!', 'success');
-                
-            } catch (error) {
-                console.error("Error al guardar:", error);
-                showToast('Error al crear la ruleta.', 'error');
-            } finally {
-                const btn = document.getElementById('btn-save-roulette');
-                btn.disabled = false;
-                btn.textContent = "Guardar y Generar Enlace";
-            }
-        }
-
-
-        function loadRoulette(id) {
-            if (!currentUser) return;
-            
-            currentRouletteId = id;
-            showView('roulette');
-            
-            const shareInput = document.getElementById('share-url');
-            shareInput.value = window.location.origin + window.location.pathname + '#' + id;
-
-            if (unsubscribeSnapshot) unsubscribeSnapshot();
-
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'roulettes', id);
-            
-            unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    currentRouletteData = data;
-                    
-                    updateHistoryUI(data.history);
-
-                    if (!isSpinning) {
-                        drawWheel();
+        // --- Configuración de Eventos ---
+        if (addBtn && itemInput) {
+            addBtn.addEventListener('click', () => {
+                const val = itemInput.value.trim();
+                if (val) {
+                    items.push(val);
+                    itemInput.value = '';
+                    updateListUI();
+                    drawRoulette();
+                    if (currentRouletteId && isInitiator) {
+                        updateDoc(doc(db, 'roulettes', currentRouletteId), { items: items });
                     }
-
-                    if (data.lastSpin && data.lastSpin.timestamp > localLastSpinTime) {
-                        const targetIndex = data.lastSpin.targetIndex;
-                        const isMe = data.lastSpin.spinnerId === currentUser.uid;
-                        
-                        startSpinAnimation(targetIndex, isMe);
-                    }
-                } else {
-                    showToast('Ruleta no encontrada.', 'error');
-                    window.location.hash = '';
-                }
-            }, (error) => {
-                console.error("Error al escuchar cambios:", error);
-            });
-        }
-
-
-        function resizeCanvas() {
-            const rect = canvas.parentElement.getBoundingClientRect();
-
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.width * dpr; 
-            ctx.scale(dpr, dpr);
-            
-            canvas.style.width = '100%';
-            canvas.style.height = '100%';
-            
-            if (currentRouletteData && !isSpinning) {
-                drawWheel();
-            }
-        }
-
-        function drawWheel() {
-            if (!currentRouletteData || !currentRouletteData.items) return;
-            
-            const { items, colors } = currentRouletteData;
-            const N = items.length;
-            const sliceAngle = (2 * Math.PI) / N;
-            
-
-            const width = canvas.width / (window.devicePixelRatio || 1);
-            const height = canvas.height / (window.devicePixelRatio || 1);
-            const cx = width / 2;
-            const cy = height / 2;
-            const radius = Math.min(cx, cy) - 5; 
-            
-            ctx.clearRect(0, 0, width, height);
-            
-            for (let i = 0; i < N; i++) {
-                const startAngle = currentRotation + i * sliceAngle;
-                const endAngle = startAngle + sliceAngle;
-                
-
-                ctx.beginPath();
-                ctx.moveTo(cx, cy);
-                ctx.arc(cx, cy, radius, startAngle, endAngle);
-                ctx.closePath();
-                ctx.fillStyle = colors[i % colors.length];
-                ctx.fill();
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#ffffff';
-                ctx.stroke();
-                
-   
-                ctx.save();
-                ctx.translate(cx, cy);
-                ctx.rotate(startAngle + sliceAngle / 2);
-                ctx.textAlign = 'right';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold ' + Math.max(12, 20 - (N/2)) + 'px sans-serif';
-                
-   
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-
-
-                let text = items[i];
-                if (text.length > 15) text = text.substring(0, 13) + '...';
-                
-                ctx.fillText(text, radius - 20, 0);
-                ctx.restore();
-            }
-            
-
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius * 0.15, 0, 2 * Math.PI);
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-            ctx.lineWidth = 4;
-            ctx.strokeStyle = '#e5e7eb';
-            ctx.stroke();
-        }
-
-
-        async function triggerSpin() {
-            if (isSpinning || !currentRouletteData || !currentUser) return;
-            
-            const items = currentRouletteData.items;
-            const N = items.length;
-            
-       
-            const targetIndex = Math.floor(Math.random() * N);
-            
-
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'roulettes', currentRouletteId);
-            const now = Date.now();
-            
-            try {
-  
-                await updateDoc(docRef, {
-                    lastSpin: {
-                        targetIndex: targetIndex,
-                        timestamp: now,
-                        spinnerId: currentUser.uid
-                    }
-                });
-            } catch (error) {
-                console.error("Error al iniciar el giro:", error);
-                showToast("Hubo un error al girar.", "error");
-            }
-        }
-
-        function easeOutCubic(t) {
-            return 1 - Math.pow(1 - t, 3);
-        }
-
-        function startSpinAnimation(targetIndex, isInitiator) {
-            if (isSpinning) return;
-            isSpinning = true;
-            localLastSpinTime = Date.now();
-            
-            const N = currentRouletteData.items.length;
-            const sliceAngle = (2 * Math.PI) / N;
-            const targetCenterAngleBase = (targetIndex + 0.5) * sliceAngle;
-            const finalAngleBase = -Math.PI / 2 - targetCenterAngleBase;
-            const currentRotNormalized = currentRotation % (2 * Math.PI);
-            let angleDiff = finalAngleBase - currentRotNormalized;
-            while (angleDiff < 0) {
-                angleDiff += 2 * Math.PI;
-            }
-            
-            const totalRotationNeeded = angleDiff + (5 * 2 * Math.PI);
-            
-            const startRotation = currentRotation;
-            const duration = 5000; 
-            const startTime = performance.now();
-            
-            function animate(currentTime) {
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-                
-                const easeProgress = easeOutCubic(progress);
-                currentRotation = startRotation + totalRotationNeeded * easeProgress;
-                
-                drawWheel();
-                
-                if (progress < 1) {
-                    animationFrameId = requestAnimationFrame(animate);
-                } else {
-                    finishSpin(targetIndex, isInitiator);
-                }
-            }
-            
-            animationFrameId = requestAnimationFrame(animate);
-        }
-
-        async function finishSpin(targetIndex, isInitiator) {
-            isSpinning = false;
-            const winnerValue = currentRouletteData.items[targetIndex];
-            showToast(`¡Salió: ${winnerValue}!`, 'success');
-            if (isInitiator && currentUser && currentRouletteId) {
-                try {
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'roulettes', currentRouletteId);
-                    const newHistory = [...(currentRouletteData.history || []), {
-                        value: winnerValue,
-                        time: Date.now()
-                    }];
-                    
-                    await updateDoc(docRef, { history: newHistory });
-                } catch (error) {
-                    console.error("Error al guardar historial:", error);
-                }
-            }
-        }
-
-        function updateHistoryUI(historyArray) {
-            historyListDiv.innerHTML = '';
-            
-            if (!historyArray || historyArray.length === 0) {
-                historyListDiv.innerHTML = '<li class="text-gray-400 text-center text-sm py-4 italic">Aún no hay giros.</li>';
-                return;
-            }
-            
-            const sortedHistory = [...historyArray].sort((a, b) => b.time - a.time);
-            
-            sortedHistory.forEach((item, index) => {
-                const li = document.createElement('li');
-                li.className = `flex justify-between items-center p-3 rounded-lg ${index === 0 ? 'bg-green-50 border border-green-200' : 'bg-gray-50'}`;
-                
-                const date = new Date(item.time);
-                const timeString = date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-                
-                li.innerHTML = `
-                    <span class="font-bold ${index === 0 ? 'text-green-700' : 'text-gray-700'}">${item.value}</span>
-                    <span class="text-xs text-gray-500">${timeString}</span>
-                `;
-                historyListDiv.appendChild(li);
-            });
-        }
-
-        function setupEventListeners() {
-            document.getElementById('btn-go-create').addEventListener('click', () => {
-                window.location.hash = 'crear';
-            });
-
-            document.getElementById('btn-add-item').addEventListener('click', () => addInputItem());
-            document.getElementById('btn-save-roulette').addEventListener('click', saveAndShareRoulette);
-            document.getElementById('btn-cancel-create').addEventListener('click', () => {
-                window.location.hash = '';
-            });
-
-            document.getElementById('btn-copy-url').addEventListener('click', () => {
-                const input = document.getElementById('share-url');
-                if (navigator.clipboard && window.isSecureContext) {
-                    navigator.clipboard.writeText(input.value).then(() => {
-                        showToast('¡Enlace copiado al portapapeles!', 'success');
-                    }).catch(err => copyFallback(input));
-                } else {
-                    copyFallback(input);
                 }
             });
-
-            document.getElementById('btn-new-roulette').addEventListener('click', () => {
-                window.location.hash = '';
-            });
-
-            document.getElementById('btn-spin').addEventListener('click', triggerSpin);
-            canvas.addEventListener('click', triggerSpin);
-            canvas.addEventListener('touchstart', (e) => {
-                e.preventDefault(); 
-                triggerSpin();
-            }, { passive: false });
-
-            window.addEventListener('resize', () => {
-                if (!views.roulette.classList.contains('hidden')) {
-                    resizeCanvas();
-                }
+            itemInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') addBtn.click();
             });
         }
 
-        function copyFallback(inputElement) {
-            inputElement.select();
-            inputElement.setSelectionRange(0, 99999); 
-            try {
+        if (spinBtn) {
+            spinBtn.addEventListener('click', spin);
+        }
+
+        if (saveShareBtn) {
+            saveShareBtn.addEventListener('click', saveAndShareRoulette);
+        }
+
+        if (copyBtn && shareUrlInput) {
+            copyBtn.addEventListener('click', () => {
+                if (!shareUrlInput.value) return;
+                shareUrlInput.select();
                 document.execCommand('copy');
                 showToast('¡Enlace copiado al portapapeles!', 'success');
-            } catch (err) {
-                showToast('No se pudo copiar automáticamente.', 'error');
-            }
-            window.getSelection().removeAllRanges();
+            });
         }
 
-        document.addEventListener('DOMContentLoaded', init);
-
+        // Iniciar pintando el canvas vacío
+        if (canvas) {
+            drawRoulette();
+            updateListUI();
+        }
     </script>
 </body>
 </html>
